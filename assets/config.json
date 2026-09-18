@@ -8,6 +8,6 @@
     "override": false,
     "selected_lang": "en_US"
   },
-  "discord_presence": true,
-  "load_custom_settings": false
+  "discord_presence": false,
+  "load_custom_settings": true
 }

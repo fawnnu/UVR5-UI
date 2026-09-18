@@ -79,6 +79,17 @@
             "Other"
         ]
     },
+    "BS-Roformer-DeEffect by gilliaan": {
+        "Github": [],
+        "HuggingFace": [
+            "https://huggingface.co/gilliaan/Stem-Separation-Models/resolve/main/DeEffect/BandSplitRoformer/gilliaan_bsroformer_deeffect_v1beta.ckpt",
+            "https://huggingface.co/gilliaan/Stem-Separation-Models/resolve/main/DeEffect/BandSplitRoformer/gilliaan_bsroformer_deeffect_v1beta.yaml"
+        ],
+        "Stems": [
+            "Vocals",
+            "Instrumental"
+        ]
+    },
     "Mel-Roformer-Crowd-Aufr33-Viperx": {
         "Github": [
             "https://github.com/nomadkaraoke/python-audio-separator/releases/download/model-configs/mel_band_roformer_crowd_aufr33_viperx_sdr_8.7144.ckpt",

@@ -10,6 +10,7 @@ import json
 import copy
 import gradio as gr
 import urllib.parse
+import urllib.request
 import assets.themes.loadThemes as loadThemes
 from audio_separator.separator import Separator
 from assets.i18n.i18n import I18nAuto
@@ -71,6 +72,7 @@ roformer_models = {
     'BS-Roformer-Viperx-1053': 'model_bs_roformer_ep_937_sdr_10.5309.ckpt',
     'Mel-Roformer-Viperx-1143': 'model_mel_band_roformer_ep_3005_sdr_11.4360.ckpt',
     'BS-Roformer-De-Reverb': 'deverb_bs_roformer_8_384dim_10depth.ckpt',
+    'BS-Roformer-DeEffect by gilliaan': 'gilliaan_bsroformer_deeffect_v1beta.ckpt',
     'Mel-Roformer-Crowd-Aufr33-Viperx': 'mel_band_roformer_crowd_aufr33_viperx_sdr_8.7144.ckpt',
     'Mel-Roformer-Denoise-Aufr33': 'denoise_mel_band_roformer_aufr33_sdr_27.9959.ckpt',
     'Mel-Roformer-Denoise-Aufr33-Aggr' : 'denoise_mel_band_roformer_aufr33_aggr_sdr_27.9768.ckpt',
@@ -270,6 +272,30 @@ found_files = []
 logs = []
 out_dir = "./outputs"
 models_dir = "./models"
+
+DEFFECT_MODEL_KEY = 'BS-Roformer-DeEffect by gilliaan'
+DEFFECT_MODEL_FILES = {
+    'gilliaan_bsroformer_deeffect_v1beta.ckpt': 'https://huggingface.co/gilliaan/Stem-Separation-Models/resolve/main/DeEffect/BandSplitRoformer/gilliaan_bsroformer_deeffect_v1beta.ckpt',
+    'gilliaan_bsroformer_deeffect_v1beta.yaml': 'https://huggingface.co/gilliaan/Stem-Separation-Models/resolve/main/DeEffect/BandSplitRoformer/gilliaan_bsroformer_deeffect_v1beta.yaml',
+}
+
+def prepare_deeffect_model(separator):
+    """Register and download the custom DeEffect model for audio-separator."""
+    os.makedirs(models_dir, exist_ok=True)
+    for filename, url in DEFFECT_MODEL_FILES.items():
+        destination = os.path.join(models_dir, filename)
+        if not os.path.exists(destination):
+            urllib.request.urlretrieve(url, destination)
+
+    supported_models = separator.list_supported_model_files()
+    supported_models.setdefault('MDXC', {})['DeEffect by gilliaan'] = {
+        'filename': 'gilliaan_bsroformer_deeffect_v1beta.ckpt',
+        'scores': {},
+        'stems': ['Vocals', 'Instrumental'],
+        'target_stem': 'Vocals',
+        'download_files': list(DEFFECT_MODEL_FILES),
+    }
+    separator.list_supported_model_files = lambda: supported_models
 extensions = (".wav", ".flac", ".mp3", ".ogg", ".opus", ".m4a", ".aiff", ".ac3")
 
 def load_config_presence():
@@ -595,6 +621,9 @@ def roformer_separator(audio, model_key, out_format, segment_size, override_seg_
             }
         )
     
+        if model_key == DEFFECT_MODEL_KEY:
+            prepare_deeffect_model(separator)
+
         progress(0.2, desc="Loading model...")
         separator.load_model(model_filename=roformer_model)
 
