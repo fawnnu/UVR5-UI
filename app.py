@@ -73,6 +73,10 @@ roformer_models = {
     'Mel-Roformer-Viperx-1143': 'model_mel_band_roformer_ep_3005_sdr_11.4360.ckpt',
     'BS-Roformer-De-Reverb': 'deverb_bs_roformer_8_384dim_10depth.ckpt',
     'BS-Roformer-DeEffect by gilliaan': 'gilliaan_bsroformer_deeffect_v1beta.ckpt',
+    'Mel-Roformer by Gabox flowers v10': 'mbr_instflowersv10_gabox.ckpt',
+    'Mel-Roformer deux (becruily)': 'mbr_deux_becruily.ckpt',
+    'BS-Roformer HyperAce v2 Inst (unwa)': 'bs_inst_hyperace2_unwa.ckpt',
+    'BS-Roformer HyperAce v2 Voc (unwa)': 'bs_voc_hyperace2_unwa.ckpt',
     'Mel-Roformer-Crowd-Aufr33-Viperx': 'mel_band_roformer_crowd_aufr33_viperx_sdr_8.7144.ckpt',
     'Mel-Roformer-Denoise-Aufr33': 'denoise_mel_band_roformer_aufr33_sdr_27.9959.ckpt',
     'Mel-Roformer-Denoise-Aufr33-Aggr' : 'denoise_mel_band_roformer_aufr33_aggr_sdr_27.9768.ckpt',
@@ -273,29 +277,59 @@ logs = []
 out_dir = "./outputs"
 models_dir = "./models"
 
-DEFFECT_MODEL_KEY = 'BS-Roformer-DeEffect by gilliaan'
-DEFFECT_MODEL_FILES = {
-    'gilliaan_bsroformer_deeffect_v1beta.ckpt': 'https://huggingface.co/gilliaan/Stem-Separation-Models/resolve/main/DeEffect/BandSplitRoformer/gilliaan_bsroformer_deeffect_v1beta.ckpt',
-    'gilliaan_bsroformer_deeffect_v1beta.yaml': 'https://huggingface.co/gilliaan/Stem-Separation-Models/resolve/main/DeEffect/BandSplitRoformer/gilliaan_bsroformer_deeffect_v1beta.yaml',
+CUSTOM_ROFORMER_MODELS = {
+    'BS-Roformer-DeEffect by gilliaan': {
+        'gilliaan_bsroformer_deeffect_v1beta.ckpt': 'https://huggingface.co/gilliaan/Stem-Separation-Models/resolve/main/DeEffect/BandSplitRoformer/gilliaan_bsroformer_deeffect_v1beta.ckpt',
+        'gilliaan_bsroformer_deeffect_v1beta.yaml': 'https://huggingface.co/gilliaan/Stem-Separation-Models/resolve/main/DeEffect/BandSplitRoformer/gilliaan_bsroformer_deeffect_v1beta.yaml',
+    },
+    'Mel-Roformer by Gabox flowers v10': {
+        'mbr_instflowersv10_gabox.ckpt': 'https://huggingface.co/noblebarkrr/mvsepless_resources/resolve/main/mel_band_roformer/mbr_instflowersv10_gabox.ckpt?download=true',
+        'mbr_instflowersv10_gabox_config.yaml': 'https://huggingface.co/noblebarkrr/mvsepless_resources/resolve/main/mel_band_roformer/mbr_instflowersv10_gabox_config.yaml?download=true',
+    },
+    'Mel-Roformer deux (becruily)': {
+        'mbr_deux_becruily.ckpt': 'https://huggingface.co/noblebarkrr/mvsepless_resources/resolve/main/mel_band_roformer/mbr_deux_becruily.ckpt?download=true',
+        'mbr_deux_becruily_config.yaml': 'https://huggingface.co/noblebarkrr/mvsepless_resources/resolve/main/mel_band_roformer/mbr_deux_becruily_config.yaml?download=true',
+    },
+    'BS-Roformer HyperAce v2 Inst (unwa)': {
+        'bs_inst_hyperace2_unwa.ckpt': 'https://huggingface.co/noblebarkrr/mvsepless_resources/resolve/main/bs_roformer/bs_inst_hyperace2_unwa.ckpt?download=true',
+        'bs_inst_hyperace2_unwa_config.yaml': 'https://huggingface.co/noblebarkrr/mvsepless_resources/resolve/main/bs_roformer/bs_inst_hyperace2_unwa_config.yaml?download=true',
+    },
+    'BS-Roformer HyperAce v2 Voc (unwa)': {
+        'bs_voc_hyperace2_unwa.ckpt': 'https://huggingface.co/noblebarkrr/mvsepless_resources/resolve/main/bs_roformer/bs_voc_hyperace2_unwa.ckpt?download=true',
+        'bs_voc_hyperace2_unwa_config.yaml': 'https://huggingface.co/noblebarkrr/mvsepless_resources/resolve/main/bs_roformer/bs_voc_hyperace2_unwa_config.yaml?download=true',
+    },
 }
 
-def prepare_deeffect_model(separator):
-    """Register and download the custom DeEffect model for audio-separator."""
+def prepare_custom_roformer_model(separator, model_key):
+    """Register and download a custom Roformer for older audio-separator builds."""
+    model_files = CUSTOM_ROFORMER_MODELS[model_key]
     os.makedirs(models_dir, exist_ok=True)
-    for filename, url in DEFFECT_MODEL_FILES.items():
+    for filename, url in model_files.items():
         destination = os.path.join(models_dir, filename)
         if not os.path.exists(destination):
             urllib.request.urlretrieve(url, destination)
 
     supported_models = separator.list_supported_model_files()
-    supported_models.setdefault('MDXC', {})['DeEffect by gilliaan'] = {
-        'filename': 'gilliaan_bsroformer_deeffect_v1beta.ckpt',
+    supported_models.setdefault('MDXC', {})[model_key] = {
+        'filename': roformer_models[model_key],
         'scores': {},
         'stems': ['Vocals', 'Instrumental'],
         'target_stem': 'Vocals',
-        'download_files': list(DEFFECT_MODEL_FILES),
+        'download_files': list(model_files),
     }
     separator.list_supported_model_files = lambda: supported_models
+
+    original_yaml_loader = separator.load_model_data_from_yaml
+    def load_custom_roformer_yaml(config_path):
+        model_data = original_yaml_loader(config_path)
+        model_data['is_roformer'] = True
+        if model_key.startswith('Mel-Roformer'):
+            model_data.pop('freqs_per_bands', None)
+            model_data['model_type'] = 'mel_band_roformer'
+        else:
+            model_data['model_type'] = 'bs_roformer'
+        return model_data
+    separator.load_model_data_from_yaml = load_custom_roformer_yaml
 extensions = (".wav", ".flac", ".mp3", ".ogg", ".opus", ".m4a", ".aiff", ".ac3")
 
 def load_config_presence():
@@ -621,8 +655,8 @@ def roformer_separator(audio, model_key, out_format, segment_size, override_seg_
             }
         )
     
-        if model_key == DEFFECT_MODEL_KEY:
-            prepare_deeffect_model(separator)
+        if model_key in CUSTOM_ROFORMER_MODELS:
+            prepare_custom_roformer_model(separator, model_key)
 
         progress(0.2, desc="Loading model...")
         separator.load_model(model_filename=roformer_model)

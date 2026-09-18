@@ -90,6 +90,38 @@
             "Instrumental"
         ]
     },
+    "Mel-Roformer by Gabox flowers v10": {
+        "Github": [],
+        "HuggingFace": [
+            "https://huggingface.co/noblebarkrr/mvsepless_resources/resolve/main/mel_band_roformer/mbr_instflowersv10_gabox.ckpt?download=true",
+            "https://huggingface.co/noblebarkrr/mvsepless_resources/resolve/main/mel_band_roformer/mbr_instflowersv10_gabox_config.yaml?download=true"
+        ],
+        "Stems": ["Vocals", "Instrumental"]
+    },
+    "Mel-Roformer deux (becruily)": {
+        "Github": [],
+        "HuggingFace": [
+            "https://huggingface.co/noblebarkrr/mvsepless_resources/resolve/main/mel_band_roformer/mbr_deux_becruily.ckpt?download=true",
+            "https://huggingface.co/noblebarkrr/mvsepless_resources/resolve/main/mel_band_roformer/mbr_deux_becruily_config.yaml?download=true"
+        ],
+        "Stems": ["Instrumental", "Vocals"]
+    },
+    "BS-Roformer HyperAce v2 Inst (unwa)": {
+        "Github": [],
+        "HuggingFace": [
+            "https://huggingface.co/noblebarkrr/mvsepless_resources/resolve/main/bs_roformer/bs_inst_hyperace2_unwa.ckpt?download=true",
+            "https://huggingface.co/noblebarkrr/mvsepless_resources/resolve/main/bs_roformer/bs_inst_hyperace2_unwa_config.yaml?download=true"
+        ],
+        "Stems": ["Vocals", "Instrumental"]
+    },
+    "BS-Roformer HyperAce v2 Voc (unwa)": {
+        "Github": [],
+        "HuggingFace": [
+            "https://huggingface.co/noblebarkrr/mvsepless_resources/resolve/main/bs_roformer/bs_voc_hyperace2_unwa.ckpt?download=true",
+            "https://huggingface.co/noblebarkrr/mvsepless_resources/resolve/main/bs_roformer/bs_voc_hyperace2_unwa_config.yaml?download=true"
+        ],
+        "Stems": ["Vocals", "Instrumental"]
+    },
     "Mel-Roformer-Crowd-Aufr33-Viperx": {
         "Github": [
             "https://github.com/nomadkaraoke/python-audio-separator/releases/download/model-configs/mel_band_roformer_crowd_aufr33_viperx_sdr_8.7144.ckpt",
