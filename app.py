@@ -11,6 +11,7 @@ import copy
 import gradio as gr
 import urllib.parse
 import urllib.request
+import tempfile
 import assets.themes.loadThemes as loadThemes
 from audio_separator.separator import Separator
 from assets.i18n.i18n import I18nAuto
@@ -301,7 +302,6 @@ CUSTOM_ROFORMER_MODELS = {
 }
 
 def prepare_custom_roformer_model(separator, model_key):
-    """Register and download a custom Roformer for older audio-separator builds."""
     model_files = CUSTOM_ROFORMER_MODELS[model_key]
     os.makedirs(models_dir, exist_ok=True)
     for filename, url in model_files.items():
@@ -323,13 +323,143 @@ def prepare_custom_roformer_model(separator, model_key):
     def load_custom_roformer_yaml(config_path):
         model_data = original_yaml_loader(config_path)
         model_data['is_roformer'] = True
-        if model_key.startswith('Mel-Roformer'):
-            model_data.pop('freqs_per_bands', None)
+        model_data['_uvr5_custom_model'] = True
+        model_config = model_data.get('model', model_data)
+        if 'num_bands' in model_config or 'n_mels' in model_config:
+            model_config.pop('freqs_per_bands', None)
             model_data['model_type'] = 'mel_band_roformer'
         else:
             model_data['model_type'] = 'bs_roformer'
         return model_data
     separator.load_model_data_from_yaml = load_custom_roformer_yaml
+    def create_pope_bs_roformer(config):
+        from bs_roformer.bs_roformer import BSRoformer as PopeBSRoformer
+        args = {
+            'dim': config['dim'],
+            'depth': config['depth'],
+            'stereo': config.get('stereo', False),
+            'num_stems': config.get('num_stems', 2),
+            'time_transformer_depth': config.get('time_transformer_depth', 2),
+            'freq_transformer_depth': config.get('freq_transformer_depth', 2),
+            'freqs_per_bands': config['freqs_per_bands'],
+            'dim_head': config.get('dim_head', 64),
+            'heads': config.get('heads', 8),
+            'attn_dropout': config.get('attn_dropout', 0.0),
+            'ff_dropout': config.get('ff_dropout', 0.0),
+            'flash_attn': config.get('flash_attn', True),
+            'num_residual_streams': config.get('num_residual_streams', 2),
+            'num_residual_fracs': config.get('num_residual_fracs', 1),
+            'mc_hyper_conn_sinkhorn_iters': config.get('mc_hyper_conn_sinkhorn_iters', 2),
+            'dim_freqs_in': config.get('dim_freqs_in', 1025),
+            'stft_n_fft': config.get('stft_n_fft', 2048),
+            'stft_hop_length': config.get('stft_hop_length', 512),
+            'stft_win_length': config.get('stft_win_length', 2048),
+            'stft_normalized': config.get('stft_normalized', False),
+            'mask_estimator_depth': config.get('mask_estimator_depth', 2),
+            'use_pope': True,
+        }
+        return PopeBSRoformer(**args)
+
+    from audio_separator.separator.roformer.roformer_loader import RoformerLoader
+    if not getattr(RoformerLoader, '_uvr5_pope_support', False):
+        original_create_bs_roformer = RoformerLoader._create_bs_roformer
+        def create_bs_roformer(loader, config):
+            return create_pope_bs_roformer(config) if config.get('use_pope', False) else original_create_bs_roformer(loader, config)
+        RoformerLoader._create_bs_roformer = create_bs_roformer
+        RoformerLoader._uvr5_pope_support = True
+
+    if not getattr(RoformerLoader, '_uvr5_custom_mel_support', False):
+        original_create_mel_roformer = RoformerLoader._create_mel_band_roformer
+        def create_mel_roformer(loader, config):
+            return original_create_mel_roformer(loader, config)
+            from bs_roformer.mel_band_roformer import MelBandRoformer
+            args = {
+                'dim': config['dim'],
+                'depth': config['depth'],
+                'stereo': config.get('stereo', False),
+                'num_stems': config.get('num_stems', 1),
+                'time_transformer_depth': config.get('time_transformer_depth', 2),
+                'freq_transformer_depth': config.get('freq_transformer_depth', 2),
+                'linear_transformer_depth': config.get('linear_transformer_depth', 1),
+                'num_bands': config['num_bands'],
+                'dim_head': config.get('dim_head', 64),
+                'heads': config.get('heads', 8),
+                'attn_dropout': config.get('attn_dropout', 0.0),
+                'ff_dropout': config.get('ff_dropout', 0.0),
+                'flash_attn': config.get('flash_attn', True),
+                'num_residual_streams': config.get('num_residual_streams', 1),
+                'num_residual_fracs': config.get('num_residual_fracs', 1),
+                'sample_rate': config.get('sample_rate', 44100),
+                'stft_n_fft': config.get('stft_n_fft', 2048),
+                'stft_hop_length': config.get('stft_hop_length', 512),
+                'stft_win_length': config.get('stft_win_length', 2048),
+                'stft_normalized': config.get('stft_normalized', False),
+                'mask_estimator_depth': config.get('mask_estimator_depth', 1),
+                'multi_stft_resolution_loss_weight': config.get('multi_stft_resolution_loss_weight', 1.0),
+                'multi_stft_resolutions_window_sizes': config.get('multi_stft_resolutions_window_sizes', (4096, 2048, 1024, 512, 256)),
+                'multi_stft_hop_size': config.get('multi_stft_hop_size', 147),
+                'multi_stft_normalized': config.get('multi_stft_normalized', False),
+            }
+            return MelBandRoformer(**args)
+        RoformerLoader._create_mel_band_roformer = create_mel_roformer
+        RoformerLoader._uvr5_custom_mel_support = True
+
+def load_mvsepless_roformer_catalog():
+    catalog_url = 'https://huggingface.co/noblebarkrr/mvsepless_resources/resolve/main/models.json'
+    try:
+        with urllib.request.urlopen(catalog_url, timeout=10) as response:
+            catalog = json.loads(response.read().decode('utf-8'))
+    except Exception as error:
+        logging.warning(f"Could not load MVSep model catalog: {error}")
+        return
+
+    existing_files = set(roformer_models.values())
+    for entry in catalog.values():
+        if entry.get('model_type') not in {'bs_roformer', 'mel_band_roformer'}:
+            continue
+        if len(entry.get('stems', [])) > 2:
+            continue
+        checkpoint_url = entry.get('checkpoint_url')
+        config_url = entry.get('config_url')
+        if not checkpoint_url or not config_url:
+            continue
+        checkpoint_name = os.path.basename(urllib.parse.urlparse(checkpoint_url).path)
+        config_name = os.path.basename(urllib.parse.urlparse(config_url).path)
+        if checkpoint_name in existing_files:
+            continue
+
+        model_key = entry.get('full_name', checkpoint_name)
+        if model_key in roformer_models:
+            continue
+        roformer_models[model_key] = checkpoint_name
+        CUSTOM_ROFORMER_MODELS[model_key] = {
+            checkpoint_name: checkpoint_url,
+            config_name: config_url,
+        }
+        existing_files.add(checkpoint_name)
+
+load_mvsepless_roformer_catalog()
+
+def normalize_audio_for_separator(audio_path):
+    if not isinstance(audio_path, str) or not audio_path.lower().endswith(('.mp3', '.m4a', '.aac', '.ogg', '.opus')):
+        return audio_path, None
+
+    temp_file = tempfile.NamedTemporaryFile(prefix='uvr5_input_', suffix='.wav', delete=False)
+    temp_file.close()
+    try:
+        subprocess.run(
+            ['ffmpeg', '-y', '-i', audio_path, '-vn', '-acodec', 'pcm_s16le', '-ar', '44100', '-ac', '2', temp_file.name],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+        return temp_file.name, temp_file.name
+    except (OSError, subprocess.CalledProcessError) as error:
+        try:
+            os.remove(temp_file.name)
+        except OSError:
+            pass
+        raise RuntimeError(f"Could not decode audio input to WAV: {error}") from error
 extensions = (".wav", ".flac", ".mp3", ".ogg", ".opus", ".m4a", ".aiff", ".ac3")
 
 def load_config_presence():
@@ -634,6 +764,7 @@ components = {
 def roformer_separator(audio, model_key, out_format, segment_size, override_seg_size, overlap, batch_size, norm_thresh, amp_thresh, single_stem, progress=gr.Progress(track_tqdm=True)):
     roformer_model = roformer_models[model_key]
     model_path = os.path.join(models_dir, roformer_model)
+    separator_audio, temporary_audio = normalize_audio_for_separator(audio)
     try:
         if not os.path.exists(model_path):
             gr.Info(f"This is the first time the {model_key} model is being used. The separation will take a little longer because the model needs to be downloaded.")
@@ -662,7 +793,27 @@ def roformer_separator(audio, model_key, out_format, segment_size, override_seg_
         separator.load_model(model_filename=roformer_model)
 
         progress(0.7, desc="Separating audio...")
-        separation = separator.separate(audio)
+        separation = separator.separate(separator_audio)
+
+        if temporary_audio:
+            temporary_stem = os.path.splitext(os.path.basename(separator_audio))[0]
+            input_stem = os.path.splitext(os.path.basename(audio))[0]
+            renamed_separation = []
+            for file_name in separation:
+                if file_name.startswith(temporary_stem):
+                    renamed_file = input_stem + file_name[len(temporary_stem):]
+                    os.replace(os.path.join(out_dir, file_name), os.path.join(out_dir, renamed_file))
+                    renamed_separation.append(renamed_file)
+                else:
+                    renamed_separation.append(file_name)
+            separation = renamed_separation
+
+        if not separation:
+            raise RuntimeError(
+                f"The separator returned no stems for '{model_key}'. "
+                "The model failed during audio processing; try a WAV/FLAC input "
+                "or a smaller segment size. See the preceding separator error for details."
+            )
 
         stems = [os.path.join(out_dir, file_name) for file_name in separation]
 
@@ -673,10 +824,18 @@ def roformer_separator(audio, model_key, out_format, segment_size, override_seg_
 
         if single_stem.strip():
             return stems[0], None, None, None, None, None
+        if len(stems) == 1:
+            return stems[0], None, None, None, None, None
         return stems[0], stems[1], None, None, None, None
     
     except Exception as e:
         raise RuntimeError(f"Roformer separation failed: {e}") from e
+    finally:
+        if temporary_audio:
+            try:
+                os.remove(temporary_audio)
+            except OSError:
+                pass
 
 @track_presence("Performing MDXC Separationn")
 def mdxc_separator(audio, model, out_format, segment_size, override_seg_size, overlap, batch_size, norm_thresh, amp_thresh, single_stem, progress=gr.Progress(track_tqdm=True)):

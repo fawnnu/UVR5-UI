@@ -1,0 +1,6 @@
+{
+    "python.defaultInterpreterPath": "${workspaceFolder}\\env\\python.exe",
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}\\env\\Lib\\site-packages"
+    ]
+}
