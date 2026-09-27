@@ -369,38 +369,30 @@ def prepare_custom_roformer_model(separator, model_key):
         RoformerLoader._uvr5_pope_support = True
 
     if not getattr(RoformerLoader, '_uvr5_custom_mel_support', False):
+        from contextvars import ContextVar
+        from audio_separator.separator.uvr_lib_v5.roformer import mel_band_roformer
+
         original_create_mel_roformer = RoformerLoader._create_mel_band_roformer
+        original_mask_estimator_init = mel_band_roformer.MaskEstimator.__init__
+        model_mlp_expansion_factor = ContextVar('uvr5_model_mlp_expansion_factor', default=None)
+
+        def initialize_mask_estimator(estimator, dim, dim_inputs, depth, mlp_expansion_factor=4):
+            configured_factor = model_mlp_expansion_factor.get()
+            if configured_factor is not None:
+                mlp_expansion_factor = configured_factor
+            original_mask_estimator_init(
+                estimator, dim, dim_inputs, depth,
+                mlp_expansion_factor=mlp_expansion_factor,
+            )
+
         def create_mel_roformer(loader, config):
-            return original_create_mel_roformer(loader, config)
-            from bs_roformer.mel_band_roformer import MelBandRoformer
-            args = {
-                'dim': config['dim'],
-                'depth': config['depth'],
-                'stereo': config.get('stereo', False),
-                'num_stems': config.get('num_stems', 1),
-                'time_transformer_depth': config.get('time_transformer_depth', 2),
-                'freq_transformer_depth': config.get('freq_transformer_depth', 2),
-                'linear_transformer_depth': config.get('linear_transformer_depth', 1),
-                'num_bands': config['num_bands'],
-                'dim_head': config.get('dim_head', 64),
-                'heads': config.get('heads', 8),
-                'attn_dropout': config.get('attn_dropout', 0.0),
-                'ff_dropout': config.get('ff_dropout', 0.0),
-                'flash_attn': config.get('flash_attn', True),
-                'num_residual_streams': config.get('num_residual_streams', 1),
-                'num_residual_fracs': config.get('num_residual_fracs', 1),
-                'sample_rate': config.get('sample_rate', 44100),
-                'stft_n_fft': config.get('stft_n_fft', 2048),
-                'stft_hop_length': config.get('stft_hop_length', 512),
-                'stft_win_length': config.get('stft_win_length', 2048),
-                'stft_normalized': config.get('stft_normalized', False),
-                'mask_estimator_depth': config.get('mask_estimator_depth', 1),
-                'multi_stft_resolution_loss_weight': config.get('multi_stft_resolution_loss_weight', 1.0),
-                'multi_stft_resolutions_window_sizes': config.get('multi_stft_resolutions_window_sizes', (4096, 2048, 1024, 512, 256)),
-                'multi_stft_hop_size': config.get('multi_stft_hop_size', 147),
-                'multi_stft_normalized': config.get('multi_stft_normalized', False),
-            }
-            return MelBandRoformer(**args)
+            token = model_mlp_expansion_factor.set(config.get('mlp_expansion_factor', 4))
+            try:
+                return original_create_mel_roformer(loader, config)
+            finally:
+                model_mlp_expansion_factor.reset(token)
+
+        mel_band_roformer.MaskEstimator.__init__ = initialize_mask_estimator
         RoformerLoader._create_mel_band_roformer = create_mel_roformer
         RoformerLoader._uvr5_custom_mel_support = True
 
@@ -798,10 +790,35 @@ def roformer_separator(audio, model_key, out_format, segment_size, override_seg_
         if temporary_audio:
             temporary_stem = os.path.splitext(os.path.basename(separator_audio))[0]
             input_stem = os.path.splitext(os.path.basename(audio))[0]
+            model_suffixes = sorted(
+                ((os.path.splitext(filename)[0], name) for name, filename in roformer_models.items()),
+                key=lambda item: len(item[0]),
+                reverse=True,
+            )
+            for suffix, previous_model in model_suffixes:
+                match = re.search(
+                    rf"(?:_\((vocals|instrumental|other|bass|drums|guitar|piano)\)_|_(vocals|instrumental|other|bass|drums|guitar|piano)_)"
+                    rf"{re.escape(suffix)}$",
+                    input_stem,
+                    re.IGNORECASE,
+                )
+                if match:
+                    stem_name = (match.group(1) or match.group(2)).title()
+                    safe_previous_model = re.sub(r'[<>:"/\\|?*]', '-', previous_model).strip()
+                    input_stem = f"{input_stem[:match.start()]} ({stem_name} - {safe_previous_model})"
+                    break
+
+            safe_model_key = re.sub(r'[<>:"/\\|?*]', '-', model_key).strip()
             renamed_separation = []
             for file_name in separation:
                 if file_name.startswith(temporary_stem):
-                    renamed_file = input_stem + file_name[len(temporary_stem):]
+                    suffix = file_name[len(temporary_stem):]
+                    match = re.match(r"_\(([^)]+)\)_.*?(\.[^.]+)$", suffix)
+                    if match:
+                        stem_name = match.group(1).title()
+                        renamed_file = f"{input_stem} ({stem_name} - {safe_model_key}){match.group(2)}"
+                    else:
+                        renamed_file = f"{input_stem} ({safe_model_key}){os.path.splitext(file_name)[1]}"
                     os.replace(os.path.join(out_dir, file_name), os.path.join(out_dir, renamed_file))
                     renamed_separation.append(renamed_file)
                 else:
