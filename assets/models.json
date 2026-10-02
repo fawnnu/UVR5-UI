@@ -1402,6 +1402,15 @@
             "Other"
         ]
     },
+    "BS-PF-SV V2 (Solo Voice)": {
+        "HuggingFace": [
+            "https://huggingface.co/Lambda001/BandSplitPolarFormers/resolve/main/BS-PF-SV_V2.ckpt",
+            "https://huggingface.co/Lambda001/BandSplitPolarFormers/resolve/main/BS-PF-SV_V2.yaml"
+        ],
+        "Stems": [
+            "Vocals"
+        ]
+    },
     "MDX23C_D1581.ckpt": {
         "Github": [
             "https://github.com/nomadkaraoke/python-audio-separator/releases/download/model-configs/MDX23C_D1581.ckpt",

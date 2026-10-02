@@ -158,6 +158,7 @@ roformer_models = {
     'MelBand Roformer | Bleed Suppressor V1 by unwa-97chris' : 'mel_band_roformer_bleed_suppressor_v1.ckpt',
     'BS Roformer | Vocals Resurrection by unwa' : 'bs_roformer_vocals_resurrection_unwa.ckpt',
     'BS Roformer | Instrumental Resurrection by unwa' : 'bs_roformer_instrumental_resurrection_unwa.ckpt',
+    'BS-PF-SV V2 (Solo Voice)' : 'BS-PF-SV_V2.ckpt',
     'BS Roformer SW by jarredou' : 'BS-Roformer-SW.ckpt'
 }
 
@@ -299,6 +300,10 @@ CUSTOM_ROFORMER_MODELS = {
         'bs_voc_hyperace2_unwa.ckpt': 'https://huggingface.co/noblebarkrr/mvsepless_resources/resolve/main/bs_roformer/bs_voc_hyperace2_unwa.ckpt?download=true',
         'bs_voc_hyperace2_unwa_config.yaml': 'https://huggingface.co/noblebarkrr/mvsepless_resources/resolve/main/bs_roformer/bs_voc_hyperace2_unwa_config.yaml?download=true',
     },
+    'BS-PF-SV V2 (Solo Voice)': {
+        'BS-PF-SV_V2.ckpt': 'https://huggingface.co/Lambda001/BandSplitPolarFormers/resolve/main/BS-PF-SV_V2.ckpt',
+        'BS-PF-SV_V2.yaml': 'https://huggingface.co/Lambda001/BandSplitPolarFormers/resolve/main/BS-PF-SV_V2.yaml',
+    },
 }
 
 def prepare_custom_roformer_model(separator, model_key):
@@ -309,11 +314,23 @@ def prepare_custom_roformer_model(separator, model_key):
         if not os.path.exists(destination):
             urllib.request.urlretrieve(url, destination)
 
+    if model_key == 'BS-PF-SV V2 (Solo Voice)':
+        checkpoint_path = os.path.join(models_dir, roformer_models[model_key])
+        weights = torch.load(checkpoint_path, map_location='cpu')
+        if isinstance(weights, dict) and 'model_state_dict' in weights:
+            cleaned_path = checkpoint_path + '.tmp'
+            try:
+                torch.save(weights['model_state_dict'], cleaned_path)
+                os.replace(cleaned_path, checkpoint_path)
+            finally:
+                if os.path.exists(cleaned_path):
+                    os.remove(cleaned_path)
+
     supported_models = separator.list_supported_model_files()
     supported_models.setdefault('MDXC', {})[model_key] = {
         'filename': roformer_models[model_key],
         'scores': {},
-        'stems': ['Vocals', 'Instrumental'],
+        'stems': ['Vocals'] if model_key == 'BS-PF-SV V2 (Solo Voice)' else ['Vocals', 'Instrumental'],
         'target_stem': 'Vocals',
         'download_files': list(model_files),
     }
@@ -325,6 +342,11 @@ def prepare_custom_roformer_model(separator, model_key):
         model_data['is_roformer'] = True
         model_data['_uvr5_custom_model'] = True
         model_config = model_data.get('model', model_data)
+        if model_data.get('hyperace2') or model_key in {
+            'BS-Roformer HyperAce v2 Inst (unwa)',
+            'BS-Roformer HyperAce v2 Voc (unwa)',
+        }:
+            model_config['_uvr5_hyperace2'] = True
         if 'num_bands' in model_config or 'n_mels' in model_config:
             model_config.pop('freqs_per_bands', None)
             model_data['model_type'] = 'mel_band_roformer'
@@ -333,38 +355,100 @@ def prepare_custom_roformer_model(separator, model_key):
         return model_data
     separator.load_model_data_from_yaml = load_custom_roformer_yaml
     def create_pope_bs_roformer(config):
-        from bs_roformer.bs_roformer import BSRoformer as PopeBSRoformer
-        args = {
-            'dim': config['dim'],
-            'depth': config['depth'],
-            'stereo': config.get('stereo', False),
-            'num_stems': config.get('num_stems', 2),
-            'time_transformer_depth': config.get('time_transformer_depth', 2),
-            'freq_transformer_depth': config.get('freq_transformer_depth', 2),
-            'freqs_per_bands': config['freqs_per_bands'],
-            'dim_head': config.get('dim_head', 64),
-            'heads': config.get('heads', 8),
-            'attn_dropout': config.get('attn_dropout', 0.0),
-            'ff_dropout': config.get('ff_dropout', 0.0),
-            'flash_attn': config.get('flash_attn', True),
-            'num_residual_streams': config.get('num_residual_streams', 2),
-            'num_residual_fracs': config.get('num_residual_fracs', 1),
-            'mc_hyper_conn_sinkhorn_iters': config.get('mc_hyper_conn_sinkhorn_iters', 2),
-            'dim_freqs_in': config.get('dim_freqs_in', 1025),
-            'stft_n_fft': config.get('stft_n_fft', 2048),
-            'stft_hop_length': config.get('stft_hop_length', 512),
-            'stft_win_length': config.get('stft_win_length', 2048),
-            'stft_normalized': config.get('stft_normalized', False),
-            'mask_estimator_depth': config.get('mask_estimator_depth', 2),
-            'use_pope': True,
-        }
-        return PopeBSRoformer(**args)
+        import inspect
+        from einops import rearrange
+        from PoPE_pytorch import PoPE, flash_attn_with_pope
+        from audio_separator.separator.uvr_lib_v5.roformer import bs_roformer
+
+        attention = bs_roformer.Attention
+        if not getattr(attention, '_uvr5_pope_support', False):
+            original_attention_init = attention.__init__
+            original_attention_forward = attention.forward
+
+            def initialize_attention(module, *args, rotary_embed=None, **kwargs):
+                pope_embed = rotary_embed if isinstance(rotary_embed, PoPE) else None
+                original_attention_init(
+                    module,
+                    *args,
+                    rotary_embed=None if pope_embed is not None else rotary_embed,
+                    **kwargs,
+                )
+                if pope_embed is not None:
+                    module.pope_embed = pope_embed
+
+            def forward_attention(module, x):
+                pope_embed = getattr(module, 'pope_embed', None)
+                if pope_embed is None:
+                    return original_attention_forward(module, x)
+
+                x = module.norm(x)
+                q, k, v = rearrange(
+                    module.to_qkv(x),
+                    'b n (qkv h d) -> qkv b h n d',
+                    qkv=3,
+                    h=module.heads,
+                )
+                out = flash_attn_with_pope(
+                    q,
+                    k,
+                    v,
+                    pos_emb=pope_embed(q.shape[-2]),
+                    softmax_scale=module.scale,
+                )
+                gates = module.to_gates(x)
+                out = out * rearrange(gates, 'b n h -> b h n 1').sigmoid()
+                out = rearrange(out, 'b h n d -> b n (h d)')
+                return module.to_out(out)
+
+            attention.__init__ = initialize_attention
+            attention.forward = forward_attention
+            attention._uvr5_pope_support = True
+
+        original_rotary_embedding = bs_roformer.RotaryEmbedding
+        bs_roformer.RotaryEmbedding = lambda dim: PoPE(dim=dim, heads=config.get('heads', 8))
+        try:
+            model_parameters = inspect.signature(bs_roformer.BSRoformer.__init__).parameters
+            model_args = {
+                key: value for key, value in config.items()
+                if key in model_parameters and key != 'use_pope'
+            }
+            return bs_roformer.BSRoformer(**model_args)
+        finally:
+            bs_roformer.RotaryEmbedding = original_rotary_embedding
 
     from audio_separator.separator.roformer.roformer_loader import RoformerLoader
     if not getattr(RoformerLoader, '_uvr5_pope_support', False):
         original_create_bs_roformer = RoformerLoader._create_bs_roformer
         def create_bs_roformer(loader, config):
-            return create_pope_bs_roformer(config) if config.get('use_pope', False) else original_create_bs_roformer(loader, config)
+            if config.get('_uvr5_hyperace2', False):
+                import inspect
+                from assets.hyperace import HyperACEMaskEstimator
+                from audio_separator.separator.uvr_lib_v5.roformer import bs_roformer
+
+                class ConfiguredHyperACEMaskEstimator(HyperACEMaskEstimator):
+                    def __init__(self, dim, dim_inputs, depth, mlp_expansion_factor=4):
+                        super().__init__(
+                            dim,
+                            dim_inputs,
+                            depth,
+                            audio_channels=2 if config.get('stereo', False) else 1,
+                            mlp_expansion_factor=mlp_expansion_factor,
+                        )
+
+                original_mask_estimator = bs_roformer.MaskEstimator
+                bs_roformer.MaskEstimator = ConfiguredHyperACEMaskEstimator
+                try:
+                    model_parameters = inspect.signature(bs_roformer.BSRoformer.__init__).parameters
+                    model_args = {
+                        key: value for key, value in config.items()
+                        if key in model_parameters and key != '_uvr5_hyperace2'
+                    }
+                    return bs_roformer.BSRoformer(**model_args)
+                finally:
+                    bs_roformer.MaskEstimator = original_mask_estimator
+            if config.get('use_pope', False):
+                return create_pope_bs_roformer(config)
+            return original_create_bs_roformer(loader, config)
         RoformerLoader._create_bs_roformer = create_bs_roformer
         RoformerLoader._uvr5_pope_support = True
 
